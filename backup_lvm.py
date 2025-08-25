@@ -8,6 +8,9 @@ from datetime import datetime
 import logging
 import traceback
 
+from dotenv import dotenv_values
+env_dict = dotenv_values('.env')
+
 # Настройка логирования
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Изменяем на DEBUG для большей детализации
@@ -34,6 +37,29 @@ YANDEX_DIR = "/server_backups"  # Папка на Яндекс.Диске
 LVM_COMMAND = "/usr/sbin/lvcreate"
 TAR_COMMAND = "/bin/tar"
 
+ENCRYPTION_PASSWORD:str = str(env_dict["ENCRYPTION_PASSWORD"])
+
+def encrypt_file(input_file, output_file):
+    try:
+        subprocess.run(
+            ["openssl", "enc", "-aes-256-cbc", "-salt", "-in", input_file, "-out", output_file, "-pass", f"pass:{ENCRYPTION_PASSWORD}"],
+            check=True
+        )
+        logger.info(f"Файл {input_file} зашифрован и сохранён как {output_file}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка при шифровании: {e}")
+
+# Функция для расшифровки файла
+def decrypt_file(input_file, output_file):
+    try:
+        subprocess.run(
+            ["openssl", "enc", "-d", "-aes-256-cbc", "-in", input_file, "-out", output_file, "-pass", f"pass:{ENCRYPTION_PASSWORD}"],
+            check=True
+        )
+        logger.info(f"Файл {input_file} расшифрован и сохранён как {output_file}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка при расшифровке: {e}")
+
 # Функция для создания LVM снапшота
 def create_lvm_snapshot():
     snapshot_name = SNAPSHOT_NAME
@@ -57,15 +83,17 @@ def archive_snapshot(snapshot_path):
 
 # Функция для загрузки на Яндекс.Диск
 def upload_to_yandex(archive_name):
-    from dotenv import dotenv_values
-    env_dict = dotenv_values('.env')
     DISK_TOKEN: str = str(env_dict["DISK_TOKEN"])
     # Создание клиента с токеном
     y = yadisk.YaDisk(token=DISK_TOKEN)
+
+    encrypted_archive = f"{archive_name}.enc"
+    encrypt_file(archive_name, encrypted_archive)
+
     remote_path = os.path.join(YANDEX_DIR, os.path.basename(archive_name))
 
     # Загружаем файл на Яндекс.Диск
-    with open(archive_name, 'rb') as file:
+    with open(encrypted_archive, 'rb') as file:
         y.upload(file, remote_path, timeout=1000)
 
     # Удаляем локальный файл после успешной загрузки
@@ -73,8 +101,6 @@ def upload_to_yandex(archive_name):
 
 # Функция для удаления старых бэкапов на Яндекс.Диске
 def clean_old_backups():
-    from dotenv import dotenv_values
-    env_dict = dotenv_values('.env')
     DISK_TOKEN: str = str(env_dict["DISK_TOKEN"])
     y = yadisk.YaDisk(token=DISK_TOKEN)
     remote_files = list(y.listdir(YANDEX_DIR))
@@ -87,6 +113,28 @@ def clean_old_backups():
 
     for file in files_to_delete:
         y.remove(file['path'])
+
+# Функция для скачивания и расшифровки файла с Яндекс.Диска
+def download_from_yandex(remote_path, local_path):
+    # Создание клиента с токеном
+    env_dict = dotenv_values('.env')
+    DISK_TOKEN = str(env_dict["DISK_TOKEN"])
+    y = yadisk.YaDisk(token=DISK_TOKEN)
+
+    # Скачиваем зашифрованный файл
+    with open(local_path, 'wb') as file:
+        y.download(remote_path, file)
+
+    # Расшифровываем файл
+    decrypted_file = local_path.replace(".enc", "")
+    decrypt_file(local_path, decrypted_file)
+
+    # Удаляем зашифрованный файл
+    os.remove(local_path)
+
+    # Разархивируем
+    subprocess.run(["tar", "-xzvf", decrypted_file], check=True)
+    os.remove(decrypted_file)
 
 # Основная функция для создания и загрузки бэкапа
 def backup():
