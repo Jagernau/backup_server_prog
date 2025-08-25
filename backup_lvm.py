@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 import traceback
 
-# Настройка логирования 
+# Настройка логирования
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Изменяем на DEBUG для большей детализации
 
@@ -36,12 +36,14 @@ TAR_COMMAND = "/bin/tar"
 
 # Функция для создания LVM снапшота
 def create_lvm_snapshot():
-    snapshot_path = os.path.join(BACKUP_DIR, f"{SNAPSHOT_NAME}.snap")
+    snapshot_name = SNAPSHOT_NAME
+    snapshot_path = f"/dev/{LVM_VOLUME_GROUP}/{snapshot_name}"
     snapshot_command = [
         LVM_COMMAND,
         "-L", SNAPSHOT_SIZE,
-        "-s", f"/dev/{LVM_VOLUME_GROUP}/{LVM_LOGICAL_VOLUME}",
-        f"{snapshot_path}"
+        "-s",
+        "-n", snapshot_name,
+        f"/dev/{LVM_VOLUME_GROUP}/{LVM_LOGICAL_VOLUME}"
     ]
     subprocess.run(snapshot_command, check=True)
     return snapshot_path
@@ -61,11 +63,11 @@ def upload_to_yandex(archive_name):
     # Создание клиента с токеном
     y = yadisk.YaDisk(token=DISK_TOKEN)
     remote_path = os.path.join(YANDEX_DIR, os.path.basename(archive_name))
-    
+
     # Загружаем файл на Яндекс.Диск
     with open(archive_name, 'rb') as file:
         y.upload(file, remote_path, timeout=1000)
-    
+
     # Удаляем локальный файл после успешной загрузки
     os.remove(archive_name)
 
@@ -76,13 +78,13 @@ def clean_old_backups():
     DISK_TOKEN: str = str(env_dict["DISK_TOKEN"])
     y = yadisk.YaDisk(token=DISK_TOKEN)
     remote_files = list(y.listdir(YANDEX_DIR))
-    
+
     # Сортируем по дате создания
     remote_files = sorted(remote_files, key=lambda f: f['modified'], reverse=True)
-    
+
     # Оставляем только 3 последних
     files_to_delete = remote_files[3:]
-    
+
     for file in files_to_delete:
         y.remove(file['path'])
 
@@ -135,12 +137,11 @@ def backup():
                     logger.info(f"Все операции отработали. Конец")
 
 # Планировщик задач для выполнения по вторникам и пятницам в 02:00
-schedule.every().tuesday.at("02:00").do(backup)
-schedule.every().friday.at("02:00").do(backup)
+#schedule.every().tuesday.at("02:00").do(backup)
+schedule.every().friday.at("09:48").do(backup)
 
 # Главный цикл для запуска планировщика
 if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(60)
-
